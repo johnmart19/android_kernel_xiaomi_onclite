@@ -746,6 +746,7 @@ static void cryptd_aead_crypt(struct aead_request *req,
 	err = crypt( req );
 
 out:
+	tfm = crypto_aead_reqtfm(req);
 	ctx = crypto_aead_ctx(tfm);
 	refcnt = atomic_read(&ctx->refcnt);
 
