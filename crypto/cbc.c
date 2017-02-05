@@ -125,14 +125,11 @@ static struct crypto_instance *crypto_cbc_alloc(struct rtattr **tb)
 	if (IS_ERR(inst))
 		goto out_put_alg;
 
-	inst->alg.cra_flags = CRYPTO_ALG_TYPE_BLKCIPHER;
-	inst->alg.cra_priority = alg->cra_priority;
-	inst->alg.cra_blocksize = alg->cra_blocksize;
-	inst->alg.cra_alignmask = alg->cra_alignmask;
-	inst->alg.cra_type = &crypto_blkcipher_type;
+	inst->alg.ivsize = alg->cra_blocksize;
+	inst->alg.min_keysize = alg->cra_cipher.cia_min_keysize;
+	inst->alg.max_keysize = alg->cra_cipher.cia_max_keysize;
 
-	/* We access the data as u32s when xoring. */
-	inst->alg.cra_alignmask |= __alignof__(u32) - 1;
+	inst->alg.base.cra_ctxsize = sizeof(struct crypto_cbc_ctx);
 
 	inst->alg.cra_blkcipher.ivsize = alg->cra_blocksize;
 	inst->alg.cra_blkcipher.min_keysize = alg->cra_cipher.cia_min_keysize;
