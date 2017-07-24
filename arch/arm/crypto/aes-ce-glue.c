@@ -302,8 +302,8 @@ static int ctr_encrypt(struct blkcipher_desc *desc, struct scatterlist *dst,
 
 		ce_aes_ctr_encrypt(tail, tsrc, (u8 *)ctx->key_enc,
 				   num_rounds(ctx), blocks, walk.iv);
-		memcpy(tdst, tail, nbytes);
-		err = blkcipher_walk_done(desc, &walk, 0);
+		crypto_xor_cpy(tdst, tsrc, tail, nbytes);
+		err = skcipher_walk_done(&walk, 0);
 	}
 	kernel_neon_end();
 
