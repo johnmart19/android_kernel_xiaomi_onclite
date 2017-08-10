@@ -43,11 +43,6 @@ const u32 sha256_ce_offsetof_count = offsetof(struct sha256_ce_state,
 const u32 sha256_ce_offsetof_finalize = offsetof(struct sha256_ce_state,
 						 finalize);
 
-const u32 sha256_ce_offsetof_count = offsetof(struct sha256_ce_state,
-					      sst.count);
-const u32 sha256_ce_offsetof_finalize = offsetof(struct sha256_ce_state,
-						 finalize);
-
 asmlinkage void sha256_block_data_order(u32 *digest, u8 const *src, int blocks);
 
 static int sha256_ce_update(struct shash_desc *desc, const u8 *data,
