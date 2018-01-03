@@ -1,7 +1,7 @@
 /*
- * Accelerated CRC32(C) using arm64 NEON and Crypto Extensions instructions
+ * Accelerated CRC32(C) using ARM CRC, NEON and Crypto Extensions instructions
  *
- * Copyright (C) 2016 - 2017 Linaro Ltd <ard.biesheuvel@linaro.org>
+ * Copyright (C) 2016 Linaro Ltd <ard.biesheuvel@linaro.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -26,16 +26,16 @@
 					 * for crc32_pmull_le_16 */
 #define SCALE_F			16L	/* size of NEON register */
 
-asmlinkage u32 crc32_pmull_le(const u8 buf[], u64 len, u32 init_crc);
-asmlinkage u32 crc32_armv8_le(u32 init_crc, const u8 buf[], size_t len);
+asmlinkage u32 crc32_pmull_le(const u8 buf[], u32 len, u32 init_crc);
+asmlinkage u32 crc32_armv8_le(u32 init_crc, const u8 buf[], u32 len);
 
-asmlinkage u32 crc32c_pmull_le(const u8 buf[], u64 len, u32 init_crc);
-asmlinkage u32 crc32c_armv8_le(u32 init_crc, const u8 buf[], size_t len);
+asmlinkage u32 crc32c_pmull_le(const u8 buf[], u32 len, u32 init_crc);
+asmlinkage u32 crc32c_armv8_le(u32 init_crc, const u8 buf[], u32 len);
 
-static u32 (*fallback_crc32)(u32 init_crc, const u8 buf[], size_t len);
-static u32 (*fallback_crc32c)(u32 init_crc, const u8 buf[], size_t len);
+static u32 (*fallback_crc32)(u32 init_crc, const u8 buf[], u32 len);
+static u32 (*fallback_crc32c)(u32 init_crc, const u8 buf[], u32 len);
 
-static int crc32_pmull_cra_init(struct crypto_tfm *tfm)
+static int crc32_cra_init(struct crypto_tfm *tfm)
 {
 	u32 *key = crypto_tfm_ctx(tfm);
 
@@ -43,7 +43,7 @@ static int crc32_pmull_cra_init(struct crypto_tfm *tfm)
 	return 0;
 }
 
-static int crc32c_pmull_cra_init(struct crypto_tfm *tfm)
+static int crc32c_cra_init(struct crypto_tfm *tfm)
 {
 	u32 *key = crypto_tfm_ctx(tfm);
 
@@ -51,8 +51,8 @@ static int crc32c_pmull_cra_init(struct crypto_tfm *tfm)
 	return 0;
 }
 
-static int crc32_pmull_setkey(struct crypto_shash *hash, const u8 *key,
-			      unsigned int keylen)
+static int crc32_setkey(struct crypto_shash *hash, const u8 *key,
+			unsigned int keylen)
 {
 	u32 *mctx = crypto_shash_ctx(hash);
 
@@ -64,7 +64,7 @@ static int crc32_pmull_setkey(struct crypto_shash *hash, const u8 *key,
 	return 0;
 }
 
-static int crc32_pmull_init(struct shash_desc *desc)
+static int crc32_init(struct shash_desc *desc)
 {
 	u32 *mctx = crypto_shash_ctx(desc->tfm);
 	u32 *crc = shash_desc_ctx(desc);
@@ -91,30 +91,48 @@ static int crc32c_update(struct shash_desc *desc, const u8 *data,
 	return 0;
 }
 
+static int crc32_final(struct shash_desc *desc, u8 *out)
+{
+	u32 *crc = shash_desc_ctx(desc);
+
+	put_unaligned_le32(*crc, out);
+	return 0;
+}
+
+static int crc32c_final(struct shash_desc *desc, u8 *out)
+{
+	u32 *crc = shash_desc_ctx(desc);
+
+	put_unaligned_le32(~*crc, out);
+	return 0;
+}
+
 static int crc32_pmull_update(struct shash_desc *desc, const u8 *data,
-			 unsigned int length)
+			      unsigned int length)
 {
 	u32 *crc = shash_desc_ctx(desc);
 	unsigned int l;
 
-	if ((u64)data % SCALE_F) {
-		l = min_t(u32, length, SCALE_F - ((u64)data % SCALE_F));
+	if (may_use_simd()) {
+		if ((u32)data % SCALE_F) {
+			l = min_t(u32, length, SCALE_F - ((u32)data % SCALE_F));
 
-		*crc = fallback_crc32(*crc, data, l);
+			*crc = fallback_crc32(*crc, data, l);
 
-		data += l;
-		length -= l;
-	}
+			data += l;
+			length -= l;
+		}
 
-	if (length >= PMULL_MIN_LEN && may_use_simd()) {
-		l = round_down(length, SCALE_F);
+		if (length >= PMULL_MIN_LEN) {
+			l = round_down(length, SCALE_F);
 
-		kernel_neon_begin();
-		*crc = crc32_pmull_le(data, l, *crc);
-		kernel_neon_end();
+			kernel_neon_begin();
+			*crc = crc32_pmull_le(data, l, *crc);
+			kernel_neon_end();
 
-		data += l;
-		length -= l;
+			data += l;
+			length -= l;
+		}
 	}
 
 	if (length > 0)
@@ -124,82 +142,67 @@ static int crc32_pmull_update(struct shash_desc *desc, const u8 *data,
 }
 
 static int crc32c_pmull_update(struct shash_desc *desc, const u8 *data,
-			 unsigned int length)
+			       unsigned int length)
 {
 	u32 *crc = shash_desc_ctx(desc);
 	unsigned int l;
 
-	if ((u64)data % SCALE_F) {
-		l = min_t(u32, length, SCALE_F - ((u64)data % SCALE_F));
+	if (may_use_simd()) {
+		if ((u32)data % SCALE_F) {
+			l = min_t(u32, length, SCALE_F - ((u32)data % SCALE_F));
 
-		*crc = fallback_crc32c(*crc, data, l);
+			*crc = fallback_crc32c(*crc, data, l);
 
-		data += l;
-		length -= l;
+			data += l;
+			length -= l;
+		}
+
+		if (length >= PMULL_MIN_LEN) {
+			l = round_down(length, SCALE_F);
+
+			kernel_neon_begin();
+			*crc = crc32c_pmull_le(data, l, *crc);
+			kernel_neon_end();
+
+			data += l;
+			length -= l;
+		}
 	}
 
-	if (length >= PMULL_MIN_LEN && may_use_simd()) {
-		l = round_down(length, SCALE_F);
-
-		kernel_neon_begin();
-		*crc = crc32c_pmull_le(data, l, *crc);
-		kernel_neon_end();
-
-		data += l;
-		length -= l;
-	}
-
-	if (length > 0) {
+	if (length > 0)
 		*crc = fallback_crc32c(*crc, data, length);
-	}
 
-	return 0;
-}
-
-static int crc32_pmull_final(struct shash_desc *desc, u8 *out)
-{
-	u32 *crc = shash_desc_ctx(desc);
-
-	put_unaligned_le32(*crc, out);
-	return 0;
-}
-
-static int crc32c_pmull_final(struct shash_desc *desc, u8 *out)
-{
-	u32 *crc = shash_desc_ctx(desc);
-
-	put_unaligned_le32(~*crc, out);
 	return 0;
 }
 
 static struct shash_alg crc32_pmull_algs[] = { {
-	.setkey			= crc32_pmull_setkey,
-	.init			= crc32_pmull_init,
+	.setkey			= crc32_setkey,
+	.init			= crc32_init,
 	.update			= crc32_update,
-	.final			= crc32_pmull_final,
+	.final			= crc32_final,
 	.descsize		= sizeof(u32),
 	.digestsize		= sizeof(u32),
 
 	.base.cra_ctxsize	= sizeof(u32),
-	.base.cra_init		= crc32_pmull_cra_init,
+	.base.cra_init		= crc32_cra_init,
 	.base.cra_name		= "crc32",
-	.base.cra_driver_name	= "crc32-arm64-ce",
+	.base.cra_driver_name	= "crc32-arm-ce",
 	.base.cra_priority	= 200,
 	.base.cra_flags		= CRYPTO_ALG_OPTIONAL_KEY,
 	.base.cra_blocksize	= 1,
 	.base.cra_module	= THIS_MODULE,
 }, {
-	.setkey			= crc32_pmull_setkey,
-	.init			= crc32_pmull_init,
+	.setkey			= crc32_setkey,
+	.init			= crc32_init,
 	.update			= crc32c_update,
-	.final			= crc32c_pmull_final,
+	.final			= crc32c_final,
 	.descsize		= sizeof(u32),
 	.digestsize		= sizeof(u32),
 
 	.base.cra_ctxsize	= sizeof(u32),
-	.base.cra_init		= crc32c_pmull_cra_init,
+	.base.cra_init		= crc32c_cra_init,
 	.base.cra_name		= "crc32c",
-	.base.cra_driver_name	= "crc32c-arm64-ce",
+	.base.cra_driver_name	= "crc32c-arm-ce",
 	.base.cra_priority	= 200,
 	.base.cra_flags		= CRYPTO_ALG_OPTIONAL_KEY,
 	.base.cra_blocksize	= 1,
@@ -208,20 +211,21 @@ static struct shash_alg crc32_pmull_algs[] = { {
 
 static int __init crc32_pmull_mod_init(void)
 {
-	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON) && (elf_hwcap & HWCAP_PMULL)) {
+	if (elf_hwcap2 & HWCAP2_PMULL) {
 		crc32_pmull_algs[0].update = crc32_pmull_update;
 		crc32_pmull_algs[1].update = crc32c_pmull_update;
 
-		if (elf_hwcap & HWCAP_CRC32) {
+		if (elf_hwcap2 & HWCAP2_CRC32) {
 			fallback_crc32 = crc32_armv8_le;
 			fallback_crc32c = crc32c_armv8_le;
 		} else {
 			fallback_crc32 = crc32_le;
 			fallback_crc32c = __crc32c_le;
 		}
-	} else if (!(elf_hwcap & HWCAP_CRC32)) {
+	} else if (!(elf_hwcap2 & HWCAP2_CRC32)) {
 		return -ENODEV;
 	}
+
 	return crypto_register_shashes(crc32_pmull_algs,
 				       ARRAY_SIZE(crc32_pmull_algs));
 }
@@ -242,3 +246,5 @@ module_exit(crc32_pmull_mod_exit);
 
 MODULE_AUTHOR("Ard Biesheuvel <ard.biesheuvel@linaro.org>");
 MODULE_LICENSE("GPL v2");
+MODULE_ALIAS_CRYPTO("crc32");
+MODULE_ALIAS_CRYPTO("crc32c");
