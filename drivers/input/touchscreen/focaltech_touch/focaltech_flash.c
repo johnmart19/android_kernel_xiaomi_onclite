@@ -626,20 +626,7 @@ int fts_fwupg_reset_to_romboot(struct i2c_client *client)
 	}
 	mdelay(10);
 
-	for (i = 0; i < FTS_UPGRADE_LOOP; i++) {
-		ret = fts_fwupg_get_boot_state(client, &state);
-		if (FTS_RUN_IN_ROM == state)
-			break;
-		mdelay(5);
-	}
-	if (i >= FTS_UPGRADE_LOOP) {
-		FTS_ERROR("reset to romboot fail");
-		return -EIO;
-	}
-
-	return 0;
-}
-
+#if (!(FTS_UPGRADE_STRESS_TEST))
 /************************************************************************
 * Name: fts_fwupg_enter_into_boot
 * Brief: enter into boot environment, ready for upgrade
@@ -677,13 +664,13 @@ int fts_fwupg_enter_into_boot(struct i2c_client *client)
 			FTS_ERROR("pram write_init fail");
 			return ret;
 		}
-	} else {
-		FTS_DEBUG("pram not supported, confirm in bootloader");
-		/* bootloader */
-		state = fts_fwupg_check_state(client, FTS_RUN_IN_BOOTLOADER);
-		if (!state) {
-			FTS_ERROR("fw not in bootloader, fail");
-			return -EIO;
+		if (chip_id1 == chip_types.chip_idh
+#if FTS_CHIP_IDC
+			&& chip_id2 == chip_types.chip_idl
+#endif
+		   ) {
+			fw_status = FTS_RUN_IN_APP;
+			break;
 		}
 	}
 
